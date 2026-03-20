@@ -1,6 +1,6 @@
 import type { FileNode } from "@/lib/file-system";
 import { VirtualFileSystem } from "@/lib/file-system";
-import { streamText, appendResponseMessages } from "ai";
+import { streamText, convertToModelMessages, stepCountIs } from "ai";
 import { buildStrReplaceTool } from "@/lib/tools/str-replace";
 import { buildFileManagerTool } from "@/lib/tools/file-manager";
 import { prisma } from "@/lib/prisma";
@@ -16,14 +16,6 @@ export async function POST(req: Request) {
   }: { messages: any[]; files: Record<string, FileNode>; projectId?: string } =
     await req.json();
 
-  messages.unshift({
-    role: "system",
-    content: generationPrompt,
-    providerOptions: {
-      anthropic: { cacheControl: { type: "ephemeral" } },
-    },
-  });
-
   // Reconstruct the VirtualFileSystem from serialized data
   const fileSystem = new VirtualFileSystem();
   fileSystem.deserializeFromNodes(files);
@@ -33,9 +25,10 @@ export async function POST(req: Request) {
   const isMockProvider = !process.env.ANTHROPIC_API_KEY;
   const result = streamText({
     model,
-    messages,
-    maxTokens: 10_000,
-    maxSteps: isMockProvider ? 4 : 40,
+    system: generationPrompt,
+    messages: await convertToModelMessages(messages),
+    maxOutputTokens: 10_000,
+    stopWhen: stepCountIs(isMockProvider ? 4 : 40),
     onError: (err: any) => {
       console.error(err);
     },
@@ -43,7 +36,7 @@ export async function POST(req: Request) {
       str_replace_editor: buildStrReplaceTool(fileSystem),
       file_manager: buildFileManagerTool(fileSystem),
     },
-    onFinish: async ({ response }) => {
+    onFinish: async () => {
       // Save to project if projectId is provided and user is authenticated
       if (projectId) {
         try {
@@ -54,21 +47,12 @@ export async function POST(req: Request) {
             return;
           }
 
-          // Get the messages from the response
-          const responseMessages = response.messages || [];
-          // Combine original messages with response messages
-          const allMessages = appendResponseMessages({
-            messages: [...messages.filter((m) => m.role !== "system")],
-            responseMessages,
-          });
-
           await prisma.project.update({
             where: {
               id: projectId,
               userId: session.userId,
             },
             data: {
-              messages: JSON.stringify(allMessages),
               data: JSON.stringify(fileSystem.serialize()),
             },
           });
@@ -79,7 +63,7 @@ export async function POST(req: Request) {
     },
   });
 
-  return result.toDataStreamResponse();
+  return result.toUIMessageStreamResponse();
 }
 
 export const maxDuration = 120;

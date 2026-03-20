@@ -45,6 +45,7 @@ Chat input → POST /api/chat → Claude AI (or mock fallback) → tool calls
 ### UI Layout
 
 Split-pane layout using `react-resizable-panels`:
+
 - **Left panel (35%)**: Chat interface (MessageList + MessageInput)
 - **Right panel (65%)**: Tabbed Preview (sandboxed iframe) / Code view (FileTree + Monaco Editor)
 
